@@ -6,7 +6,6 @@ from telegram.ext import (
 )
 import os
 import sqlite3
-from aiohttp import web
 
 # Logging
 logging.basicConfig(
@@ -94,10 +93,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logging.error("Exception occurred:", exc_info=context.error)
 
-# Ping server (Render uyumlu)
-async def handle_ping(request):
-    return web.Response(text="pong")
-
 def main():
     init_db()
     application = Application.builder().token(BOT_TOKEN).build()
@@ -107,12 +102,6 @@ def main():
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_error_handler(error_handler)
-
-    # Ping server
-    app = web.Application()
-    app.add_routes([web.get("/", handle_ping)])
-    port = int(os.getenv("PORT", 8080))
-    web.run_app(app, port=port, handle_signals=False, print=None, reuse_port=True)
 
     application.run_polling()
 
