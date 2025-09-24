@@ -5,6 +5,8 @@ from telegram.ext import (
     MessageHandler, ContextTypes, filters
 )
 import os
+import sqlite3
+from aiohttp import web
 
 # Logging
 logging.basicConfig(
@@ -12,47 +14,92 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# Ortam değişkenleri
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
+DB_PATH = os.getenv("DATABASE_PATH", "elyor.db")
 
-# /start komutu
+# Database init
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("""CREATE TABLE IF NOT EXISTS vpn_codes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT NOT NULL,
+        sent_count INTEGER DEFAULT 0
+    )""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS channels (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT,
+        link TEXT,
+        max_subs TEXT DEFAULT "max"
+    )""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY
+    )""")
+    conn.commit()
+    conn.close()
+
+# /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    text = f"👋 Salam {user.first_name}!
+    text = f"👋 Salam {user.first_name}!\n\nVPN kody almak üçin aşakdaky kanallara agza boluň we soň aşakdaky '✅ Agza boldum' düwmesine basyň."
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT title, link FROM channels")
+    channels = cur.fetchall()
+    conn.close()
 
-VPN kody almak üçin aşakdaky kanallara agza boluň we soň 'Agza boldum' düwmesine basyň."
-    keyboard = [
-        [InlineKeyboardButton("📢 Kanal 1", url="https://t.me/example1")],
-        [InlineKeyboardButton("📢 Kanal 2", url="https://t.me/example2")],
-        [InlineKeyboardButton("✅ Agza boldum", callback_data="check_subscription")]
-    ]
+    keyboard = []
+    for title, link in channels:
+        keyboard.append([InlineKeyboardButton(f"📢 {title}", url=link)])
+    keyboard.append([InlineKeyboardButton("✅ Agza boldum", callback_data="check_subscription")])
+
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
-# Buton handler
+# Button
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     if query.data == "check_subscription":
-        # Burada gerçek kontrol yapılabilir (Telegram API ile kanal üyeliği kontrolü)
-        await query.edit_message_text("🎉 Siz ähli kanallara agza boldunuz!
-VPN koduňyz: TEST-CODE-1234")
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("SELECT id, code FROM vpn_codes ORDER BY id DESC LIMIT 1")
+        row = cur.fetchone()
+        if row:
+            vpn_id, code = row
+            cur.execute("UPDATE vpn_codes SET sent_count = sent_count + 1 WHERE id=?", (vpn_id,))
+            conn.commit()
+            await query.edit_message_text(f"🎉 Siz ähli kanallara agza boldunuz!\n\n🔑 VPN koduňyz: {code}")
+        else:
+            await query.edit_message_text("⚠️ Häzirlikçe VPN kod ýok.")
+        conn.close()
 
-# Admin için basit panel
+# Admin
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
         return
-    await update.message.reply_text("🔧 Admin paneline hoş geldiňiz!")
+    keyboard = [
+        [InlineKeyboardButton("➕ Kanal goş", callback_data="add_channel"),
+         InlineKeyboardButton("📋 Kanallary gör", callback_data="list_channels")],
+        [InlineKeyboardButton("➕ VPN goş", callback_data="add_vpn"),
+         InlineKeyboardButton("📋 VPN gör", callback_data="list_vpn")]
+    ]
+    await update.message.reply_text("🔧 Admin paneli", reply_markup=InlineKeyboardMarkup(keyboard))
 
-# Mesaj handler
+# Normal messages
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🤖 Men diňe görkezilen komandalar bilen işleýärin.")
 
-# Hata handler
+# Error handler
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logging.error("Exception occurred:", exc_info=context.error)
 
+# Ping server (Render uyumlu)
+async def handle_ping(request):
+    return web.Response(text="pong")
+
 def main():
+    init_db()
     application = Application.builder().token(BOT_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
@@ -60,6 +107,12 @@ def main():
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_error_handler(error_handler)
+
+    # Ping server
+    app = web.Application()
+    app.add_routes([web.get("/", handle_ping)])
+    port = int(os.getenv("PORT", 8080))
+    web.run_app(app, port=port, handle_signals=False, print=None, reuse_port=True)
 
     application.run_polling()
 
