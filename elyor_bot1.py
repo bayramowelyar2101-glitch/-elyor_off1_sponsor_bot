@@ -1,4 +1,3 @@
-
 import logging
 import sqlite3
 import os
@@ -14,15 +13,15 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# Ortamdan Token ve Admin ID'leri al
+# Ortamdan Token we Admin ID'leri al
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 
-# SQLite bağlantısı
+# SQLite baglanti
 conn = sqlite3.connect("elyor_bot.db", check_same_thread=False)
 cur = conn.cursor()
 
-# Tablolar oluştur
+# Tablolar
 cur.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, first_name TEXT)")
 cur.execute("CREATE TABLE IF NOT EXISTS channels (id INTEGER PRIMARY KEY AUTOINCREMENT, link TEXT, max_subs TEXT, order_num INTEGER)")
 cur.execute("CREATE TABLE IF NOT EXISTS vpn_codes (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT, used_count INTEGER DEFAULT 0)")
@@ -34,9 +33,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cur.execute("INSERT OR IGNORE INTO users (user_id, first_name) VALUES (?, ?)", (user.id, user.first_name))
     conn.commit()
 
-    text = f"👋 Salam {user.first_name}!
+    text = f"""👋 Salam {user.first_name}!
 
-VPN kody almak üçin aşakdaky kanallara agza boluň we soň '✅ Agza boldum' düwmesine basyň."
+VPN kody almak üçin aşakdaky kanallara agza boluň
+we soň '✅ Agza boldum' düwmesine basyň."""
 
     cur.execute("SELECT link FROM channels ORDER BY order_num ASC")
     channels = cur.fetchall()
@@ -60,15 +60,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     if query.data == "check_subscription":
-        # Häzirki wagtda diňe test görnüşinde
         cur.execute("SELECT code FROM vpn_codes LIMIT 1")
         code = cur.fetchone()
         if code:
             cur.execute("UPDATE vpn_codes SET used_count = used_count + 1 WHERE code = ?", (code[0],))
             conn.commit()
-            await query.edit_message_text(f"🎉 Siz ähli kanallara agza boldunuz!
-
-🔑 VPN koduňyz: {code[0]}")
+            await query.edit_message_text(f"🎉 Siz ähli kanallara agza boldunuz!\n\n🔑 VPN koduňyz: {code[0]}")
         else:
             await query.edit_message_text("⚠️ Häzirlikçe VPN kod ýok. Admin goşmaly.")
 
@@ -76,12 +73,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
         return
-    text = "🔧 Admin paneline hoş geldiňiz!
+    text = """🔧 Admin paneline hoş geldiňiz!
 
-/kanal_ekle link max/order
+/kanal_ekle link max order
 /kanal_sil id
 /kod_ekle KOD
-/kodlar"
+/kodlar"""
     await update.message.reply_text(text)
 
 # Kanal ekle
@@ -131,11 +128,9 @@ async def kodlar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not rows:
         await update.message.reply_text("⚠️ Kod ýok.")
         return
-    msg = "🔑 VPN Kodlar:
-"
+    msg = "🔑 VPN Kodlar:\n"
     for r in rows:
-        msg += f"{r[0]} → {r[1]} gezek ulanyldy
-"
+        msg += f"{r[0]} → {r[1]} gezek ulanyldy\n"
     await update.message.reply_text(msg)
 
 # Adaty tekst mesajlaryna jogap
