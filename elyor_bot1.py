@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
 # elyor_bot1.py
-# Full-featured sponsor bot with inline admin panel and SQLite persistence.
-# - python-telegram-bot v20 compatible (Application)
-# - All user strings in Turkmen (as requested)
-# - HTML-escaped dynamic fields to avoid parse errors
-# - SQLite file DB for persistence (default elyor_bot.db)
 
 import os
 import logging
@@ -173,11 +168,26 @@ async def check_user_member(app: Application, channel: str, user_id: int) -> boo
         return False
 
 def make_channels_keyboard(channels: List[Dict[str, Any]]) -> InlineKeyboardMarkup:
+    """
+    Build keyboard where channel buttons use direct URL when possible:
+    - If channel.link starts with '@' -> convert to https://t.me/username
+    - If channel.link starts with 'http' -> use as-is
+    - If channel.link is a numeric -100... id -> (no direct url possible) -> fallback to callback to show details
+    """
     rows = []
     currow = []
     for ch in channels:
-        # Use callback to show details so we can provide link and instructions
-        currow.append(InlineKeyboardButton(f"🔔 {ch['title']}", callback_data=f"chan:{ch['id']}"))
+        link = ch.get("link", "") or ""
+        url = None
+        if link.startswith("@"):
+            url = f"https://t.me/{link.lstrip('@')}"
+        elif link.startswith("http://") or link.startswith("https://"):
+            url = link
+        # If url is None (e.g. -100... id), create callback that opens details
+        if url:
+            currow.append(InlineKeyboardButton(f"🔔 {ch['title']}", url=url))
+        else:
+            currow.append(InlineKeyboardButton(f"🔔 {ch['title']}", callback_data=f"chan:{ch['id']}"))
         if len(currow) == 2:
             rows.append(currow)
             currow = []
@@ -193,21 +203,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db_execute("INSERT OR REPLACE INTO users(user_id, username, first_name) VALUES (?, ?, ?)",
                    (user.id, user.username or "", user.first_name or ""))
     bot_me = await context.bot.get_me()
-    bot_name = bot_me.username
+    bot_name = bot_me.username or ""
     channels = get_channels(active_only=True)
     if not channels:
         await update.message.reply_text("👋 Salam! Häzirki wagtda admin hiç hili kanal bellänok.")
         return
 
     safe_name = html.escape(user.first_name or user.username or str(user.id))
-    safe_bot = html.escape(bot_name or "")
+    safe_bot = html.escape(bot_name)
     text = (
         f"👋 Salam <b>{safe_name}</b>!\n"
         f"🤖 @{safe_bot} botuna hoş geldiňiz.\n\n"
         "🔑 VPN kody almak üçin aşakdaky kanallara agza boluň:\n"
         "1️⃣ Her kanala girip agza boluň.\n"
         "2️⃣ Soňra <b>Agza boldum</b> düwmesine basyň.\n\n"
-        "📌 Eger ähli kanallara agza bolsaňyz, size admin tarapyndan bellän VPN (hediye) ugradylar."
+        "📌 Bu bot size admin tarapyndan düzülen full tizlikde 7/24 işleýän VPN kodyny mugt berýär."
     )
     kb = make_channels_keyboard(channels)
     await update.message.reply_text(text, reply_markup=kb, parse_mode=constants.ParseMode.HTML)
@@ -221,7 +231,7 @@ async def callback_dispatcher(update: Update, context: ContextTypes.DEFAULT_TYPE
     data = query.data or ""
     user = query.from_user
 
-    # Confirm subscription button
+    # Confirm subscription
     if data == "confirm_subs":
         channels = get_channels(active_only=True)
         missing = []
@@ -231,7 +241,7 @@ async def callback_dispatcher(update: Update, context: ContextTypes.DEFAULT_TYPE
                 missing.append(ch)
             await asyncio.sleep(0.08)
         if missing:
-            lines = ["⚠️ Siz ähli kanallara agza bolmadyňyz!", "📌 Agza bolmadyk kanallaryňyz:"]
+            lines = ["⚠️ Siz hemmesine agza bolmadyňyz!", "📌 Agza bolmadyk kanallaryňyz:"]
             for m in missing:
                 lines.append(f"➡️ {html.escape(m['title'])} ({html.escape(m['link'])})")
             lines.append("\n🔁 Täzeden barlap görüň.")
@@ -241,7 +251,7 @@ async def callback_dispatcher(update: Update, context: ContextTypes.DEFAULT_TYPE
         # All subscribed -> send latest vpn code added by admin
         rows = db_execute("SELECT id, text FROM vpn_codes ORDER BY created_at DESC LIMIT 1", fetch=True) or []
         if not rows:
-            await query.edit_message_text("🎉 Siz ähli kanallara agza boldyňyz.\n\n🔑 Häzirki wagtda admin hiç hili VPN kody bellänok.")
+            await query.edit_message_text("🎉 Siz ähli kanallara agza boldyňyz.\n\n🔑 Häzirki wagtda admin VPN kody goşmandyr.")
             return
         vpn_id, vpn_text = rows[0]
         try:
@@ -257,7 +267,7 @@ async def callback_dispatcher(update: Update, context: ContextTypes.DEFAULT_TYPE
             await query.edit_message_text("⚠️ VPN kody ugratmakda problem boldy. Admin bilen habarlaşyň.")
         return
 
-    # Channel detail button
+    # Channel detail (used when no direct url available)
     if data.startswith("chan:"):
         try:
             cid = int(data.split(":", 1)[1])
@@ -279,7 +289,7 @@ async def callback_dispatcher(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text(send_text, parse_mode=constants.ParseMode.HTML)
         return
 
-    # Admin entry
+    # Admin panel entry
     if data in ("admin_panel", "adm_open"):
         if not is_admin(user.id):
             await query.edit_message_text("Siz admin emezsiniz.")
@@ -287,7 +297,7 @@ async def callback_dispatcher(update: Update, context: ContextTypes.DEFAULT_TYPE
         await show_admin_panel(query, context)
         return
 
-    # Admin callbacks prefix adm_
+    # Admin callbacks
     if data.startswith("adm_"):
         if not is_admin(user.id):
             await query.edit_message_text("Siz admin emezsiniz.")
@@ -426,9 +436,17 @@ async def admin_callbacks_dispatch(query, context: ContextTypes.DEFAULT_TYPE):
 # ---------------- Admin text actions handler ----------------
 async def text_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if not user or not is_admin(user.id):
+    # If non-admin and not part of admin flows, ignore (or you may add user flows here)
+    if not user:
         return
+
     action = context.user_data.get("adm_action")
+    # If admin action expected, enforce admin
+    if action and not is_admin(user.id):
+        await update.message.reply_text("Siz admin emezsiniz.")
+        context.user_data.pop("adm_action", None)
+        return
+
     if not action:
         return
 
